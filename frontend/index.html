@@ -48,6 +48,7 @@ a{color:var(--navy)}
 .content .container{margin-top:-40px;position:relative;z-index:2}
 .panel{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px}
 h2{font-size:21px;margin-bottom:12px}
+.sub{font-size:18px}
 .grid{display:grid;grid-template-columns:320px 1fr;gap:20px}
 .grid3{display:grid;grid-template-columns:300px 1fr 280px;gap:20px}
 @media(max-width:1020px){.grid3{grid-template-columns:300px 1fr}.grid3 .phonecol{grid-column:1/-1}}
@@ -192,7 +193,7 @@ footer b{color:#fff}
 <aside class="panel">
 <h2 id="cname"></h2>
 <p class="note" id="cdesc" style="margin:0 0 16px"></p>
-<h2 style="font-size:17px">Signalen met toestemming</h2>
+<h2 class="sub">Signalen met toestemming</h2>
 <div id="sigs"></div>
 <p class="note">Jij beslist welke signalen meetellen. Zet er een uit en het voorstel past zich meteen aan.</p>
 </aside>
@@ -202,7 +203,7 @@ footer b{color:#fff}
 <div class="bubble" id="bub"></div>
 <div class="actions" id="acts"></div>
 <div class="err" id="cerr" role="alert"></div>
-<div class="why"><h2 style="font-size:18px">Waarom zie ik dit?</h2><div id="why"></div></div>
+<div class="why"><h2 class="sub">Waarom zie ik dit?</h2><div id="why"></div></div>
 </main>
 <aside class="phonecol">
 <div class="phone" aria-label="Voorbeeld in de KBC-app"><div class="screen" id="phone"></div></div>
@@ -226,7 +227,7 @@ footer b{color:#fff}
 <div class="hot"><b>4. Uitleg</b>taalmodel enkel bij een trigger</div>
 <div><b>5. Kanaal</b>app, mail, kantoor, stem</div>
 </div>
-<h3 style="font-size:17px">Gemeten: dezelfde motor op 10.000 synthetische klanten</h3>
+<h3 class="sub">Gemeten: dezelfde motor op 10.000 synthetische klanten</h3>
 <div class="stat" id="stats"><div><span>Laden…</span></div></div>
 <div class="ctl">
 <div><label for="n">Aantal klanten: <output id="no"></output></label><input id="n" type="range" min="100000" max="2300000" step="100000" value="2300000"></div>

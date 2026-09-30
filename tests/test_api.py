@@ -1,6 +1,7 @@
 """Security- en logica-tests. Draaien: pytest -q (vanuit de root van de repo)."""
 import os
 import sys
+import time
 from pathlib import Path
 
 os.environ["JWT_SECRET"] = "t" * 40
@@ -45,6 +46,10 @@ FULL_CLAIMS = {"sub": "adviseur", "role": "advisor", "exp": 9999999999,
                "iss": "kbc-moments", "aud": "kbc-moments", "jti": "x"}
 
 
+def test_niet_bearer_schema_geweigerd():
+    assert client.get("/api/me", headers={"Authorization": "Basic bG90dGU6eA=="}).status_code == 401
+
+
 def test_vervalste_token_geweigerd():
     # alle claims aanwezig: enkel de handtekening is fout
     fake = jwt.encode(FULL_CLAIMS, "verkeerd-geheim" * 3, algorithm="HS256")
@@ -67,8 +72,8 @@ def test_uitloggen_trekt_token_in():
 
 def test_aanvaller_kan_klant_niet_buitensluiten():
     # aanvaller probeerde 6x een fout wachtwoord vanaf een ander IP (TestClient heeft 1 vast IP)
-    for _ in range(6):
-        main._hit(("fail", "karim", "6.6.6.6"))
+    with main._attempts_lock:
+        main._attempts[("fail", "karim", "6.6.6.6")].extend([time.monotonic()] * 6)
     assert login("karim").status_code == 200  # echte Karim kan nog steeds binnen
 
 
