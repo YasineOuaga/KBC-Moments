@@ -12,7 +12,7 @@ KBC herkent levensmomenten (eerste job, eerste woning, op weg naar pensioen) uit
 
 ## Het juiste moment
 Een moment herkennen is niet genoeg: de boodschap moet ook op het juiste tijdstip vertrekken.
-- **Timing per moment:** "Eerste vaste job" vertrekt de ochtend dat het loon binnenkomt (valt de loondag in het weekend, dan de vrijdag ervoor). Andere momenten: de eerstvolgende werkdag, tijdens de kantooruren.
+- **Timing per moment:** "Eerste vaste job" vertrekt de ochtend dat het loon binnenkomt (valt de loondag in het weekend, dan de vrijdag ervoor; loon op de 31e valt in korte maanden op de laatste dag). Andere momenten: de eerstvolgende werkdag, tijdens de kantooruren.
 - **Contactbeleid:** maximaal 1 proactief bericht per 30 dagen per klant. Karim kreeg op 15/09 al een bericht, dus zijn voorstel schuift op naar 15/10.
 - De klant ziet op een telefoonvoorbeeld hoe en wanneer het bericht binnenkomt, of waarom er geen melding komt.
 
@@ -28,7 +28,7 @@ Transacties/events → Signalen → Moment (regels, batch) → Beleid (actie of 
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env    # vul JWT_SECRET en DEMO_PASSWORD in
-cd backend && uvicorn main:app --reload
+cd backend && uvicorn main:app --reload --no-proxy-headers
 ```
 Open http://localhost:8000. Demo-gebruikers: `lotte`, `karim`, `jan` (klanten) en `adviseur` (ziet enkel Lotte en Karim). Wachtwoord = `DEMO_PASSWORD` uit `.env`.
 
@@ -41,25 +41,30 @@ pytest -q
 Deployen op Google Cloud Run (secrets als omgevingsvariabelen, nooit in de image):
 ```bash
 gcloud run deploy kbc-moments --source . --region europe-west1 --allow-unauthenticated \
+  --min-instances=1 --max-instances=1 \
   --set-env-vars JWT_SECRET=...,DEMO_PASSWORD=...,GEMINI_API_KEY=...
 ```
+Precies 1 instantie, omdat de state in geheugen zit: zo ziet de adviseur altijd de toestemming die de klant net aanpaste.
 
 ## Security
 - Klant-ID komt uit de JWT, nooit uit de URL of body (geen IDOR).
 - Rollen server-side gecontroleerd. De adviseur ziet enkel toegewezen klanten en enkel signalen met toestemming, geen ruwe transacties.
 - PBKDF2-gehashte wachtwoorden en strikte input-validatie.
-- Login-bescherming zonder lockout-misbruik: enkel mislukte pogingen tellen, per gebruiker+IP. Een aanvaller kan een echte klant dus niet buitensluiten. De tabel met pogingen is begrensd (geen geheugenlek).
+- Login-bescherming zonder lockout-misbruik: enkel mislukte pogingen tellen, per gebruiker+IP. Een aanvaller kan een echte klant dus niet buitensluiten. Controleren en tellen gebeurt in één stap onder een lock, vóór het hashen, dus ook een burst parallelle verzoeken wordt afgeremd. Gebruikersnamen zijn beperkt tot `a-z 0-9 . _ -`. Achter Cloud Run telt de door de proxy toegevoegde IP (`TRUST_PROXY=1`), niet een vervalsbare header. De tabel met pogingen is begrensd (geen geheugenlek).
 - JWT met `iss`, `aud` en `jti`. Uitloggen trekt de token server-side in.
-- Business logic: "Klopt niet" kan enkel op het moment dat de klant effectief te zien krijgt.
+- Business logic: "Klopt niet" kan enkel op het moment dat de klant effectief te zien krijgt. Toestemming is overal bindend, ook voor de timing: zonder toestemming voor het loonsignaal wordt de loondag niet gebruikt. Een moment vereist een ankersignaal (eerste loon, woonlening-simulatie of notaris, pensioensimulatie): bijkomende signalen alleen sturen niets.
+- Taalmodel: timeout van 5 s en een vangnet op de uitvoer. Tekst met krediet, lening of bedragen wordt geweigerd en vervangen door de standaardtekst.
+- Gedeelde state is thread-safe (lock), versies zijn gepind.
 - Security headers: strikte CSP zonder inline scripts, HSTS, Permissions-Policy. Output-escaping in de frontend.
-- 18 automatische tests voor authenticatie, autorisatie/IDOR en business logic (`tests/`).
+- 38 automatische tests voor authenticatie, autorisatie/IDOR, business logic en timing (`tests/`).
+- Demo-vereenvoudiging: alle demo-accounts delen één wachtwoord uit `.env`.
 - Geen secrets in de repo, enkel synthetische data.
 
 ## Structuur
 - `backend/engine.py`: signaaldetectie, momentscoring, synthetische data
 - `backend/main.py`: API, auth, personalisatie via Gemini (met fallback)
 - `frontend/index.html` + `frontend/app.js`: klant-, adviseur- en schaal-view in KBC-stijl
-- `tests/test_api.py`: security- en logica-tests
+- `tests/test_api.py`, `tests/test_engine.py`: security-, logica- en timingtests
 - `Dockerfile`: container voor Cloud Run
 
 ## Onafgewerkt

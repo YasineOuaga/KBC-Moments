@@ -5,7 +5,9 @@ alleen aangeroepen in main.py wanneer er een moment gedetecteerd wordt.
 """
 from __future__ import annotations
 
+import calendar
 import random
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -30,15 +32,17 @@ MOMENTS = {
     "first": {
         "title": "Eerste vaste job",
         "weights": {"income": .35, "rent": .25, "search": .2, "lowbal": .2},
+        "anchor": {"income"},  # zonder eerste loon geen "eerste job"
         "action": "Start een spaarpotje van €50 per maand",
         "goal": "helpen een buffer op te bouwen zodat huur en vaste kosten altijd gedekt zijn",
-        "channel": "App-melding op je volgende salarisdag",
+        "channel": "App-melding",
         "tone": "Informeel, korte zinnen",
         "timing": "payday",
     },
     "home": {
         "title": "Eerste woning",
         "weights": {"mortgage": .4, "notary": .35, "rent": .25},
+        "anchor": {"mortgage", "notary"},
         "action": "Bekijk je maandlast en regel je brandverzekering",
         "goal": "tonen wat de maandlast wordt en welke verzekering nu al nodig is",
         "channel": "Afspraak op kantoor voorgesteld, plus app",
@@ -48,6 +52,7 @@ MOMENTS = {
     "ret": {
         "title": "Op weg naar pensioen",
         "weights": {"pension": .55, "search": .25, "lowbal": .2},
+        "anchor": {"pension"},
         "action": "Plan een gesprek over je pensioen",
         "goal": "samen het pensioenplan doorlopen en aanvullende opties tonen, zonder druk",
         "channel": "Persoonlijk gesprek, geen app-melding",
@@ -91,7 +96,7 @@ def detect_signals(c: Customer) -> dict[str, str]:
         r = rents[0]
         out["rent"] = f"Nieuwe maandelijkse betaling aan {r[2]} ({eur(-r[1])}) sinds {r[0]:%d/%m}"
 
-    notary = [t for t in tx if t[3] == "notary"]
+    notary = [t for t in tx if t[3] == "notary" and t[0] >= TODAY - timedelta(days=180)]
     if notary:
         n = notary[-1]
         out["notary"] = f"Betaling aan {n[2]} ({eur(-n[1])}) op {n[0]:%d/%m}"
@@ -112,7 +117,11 @@ def detect_signals(c: Customer) -> dict[str, str]:
 
 
 def pick_moment(signals: dict[str, str], consent: set[str], suppressed: set[str] | None = None) -> dict:
-    """Kiest het moment met de hoogste score, enkel met signalen waarvoor toestemming is."""
+    """Kiest het moment met de hoogste score, enkel met signalen waarvoor toestemming is.
+
+    Een moment is pas actief als ook een ankersignaal meetelt: bijkomende signalen
+    alleen (huur, zoeken, laag saldo) bewijzen nog geen levensmoment.
+    """
     suppressed = suppressed or set()
     best = None
     for key, m in MOMENTS.items():
@@ -120,11 +129,12 @@ def pick_moment(signals: dict[str, str], consent: set[str], suppressed: set[str]
             continue
         used = [s for s in m["weights"] if s in signals and s in consent]
         score = round(sum(m["weights"][s] for s in used), 2)
+        anchored = bool(m["anchor"] & set(used))
         if best is None or score > best["score"]:
-            best = {"key": key, "score": score, "used": used}
+            best = {"key": key, "score": score, "used": used, "anchored": anchored}
     if best is None:
         return {"key": None, "score": 0, "used": [], "active": False}
-    best["active"] = best["score"] >= THRESHOLD
+    best["active"] = best.pop("anchored") and best["score"] >= THRESHOLD
     return best
 
 
@@ -135,23 +145,33 @@ def _next_workday(d: date) -> date:
     return d
 
 
-def _payday(d: date) -> date:
-    """Valt de loondag in het weekend, dan komt het loon de vrijdag ervoor."""
+def _payday(y: int, m: int, day: int) -> date:
+    """Loondag in maand y/m: geklemd op de maandlengte, weekend -> vrijdag ervoor."""
+    d = date(y, m, min(day, calendar.monthrange(y, m)[1]))
     while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
 
 
-def plan_contact(c: Customer, key: str) -> dict:
-    """Bepaalt WANNEER de boodschap vertrekt: het juiste moment, binnen het contactbeleid."""
+def _next_payday(day: int, after: date) -> date:
+    """Eerste loondag strikt na `after`."""
+    y, m = after.year, after.month
+    while (d := _payday(y, m, day)) <= after:
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return d
+
+
+def plan_contact(c: Customer, key: str, consent: set[str]) -> dict:
+    """Bepaalt WANNEER de boodschap vertrekt: het juiste moment, binnen het contactbeleid.
+
+    Loondata wordt enkel gebruikt met toestemming voor het signaal 'income'.
+    """
     salaries = [t[0] for t in c.tx if t[3] == "salary"]
-    if MOMENTS[key]["timing"] == "payday" and salaries:
-        day = min(max(salaries).day, 28)
-        y, m = TODAY.year, TODAY.month
-        when = _payday(date(y, m, day))
-        if when <= TODAY:
-            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-            when = _payday(date(y, m, day))
+    payday = (MOMENTS[key]["timing"] == "payday" and salaries and "income" in consent)
+    if payday:
+        # meest voorkomende dag: een verschoven betaling (weekend) verandert de loondag niet
+        day = Counter(d.day for d in salaries).most_common(1)[0][0]
+        when = _next_payday(day, TODAY)
         hour, why = 8, "De ochtend dat het loon binnenkomt: dan is er ruimte om te sparen."
     else:
         when = _next_workday(TODAY + timedelta(days=1))
@@ -161,7 +181,7 @@ def plan_contact(c: Customer, key: str) -> dict:
     if c.last_contact:
         earliest = _next_workday(c.last_contact + timedelta(days=CONTACT_GAP_DAYS))
         if earliest > when:
-            when = earliest
+            when = _next_payday(day, earliest - timedelta(days=1)) if payday else earliest
             held = (f"Uitgesteld: laatste bericht was op {c.last_contact:%d/%m}. "
                     f"Maximaal 1 bericht per {CONTACT_GAP_DAYS} dagen.")
     return {"date": when.isoformat(), "hour": hour,

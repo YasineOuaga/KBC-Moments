@@ -41,15 +41,19 @@ def test_zonder_token_geen_toegang():
     assert client.get("/api/me").status_code == 401
 
 
+FULL_CLAIMS = {"sub": "adviseur", "role": "advisor", "exp": 9999999999,
+               "iss": "kbc-moments", "aud": "kbc-moments", "jti": "x"}
+
+
 def test_vervalste_token_geweigerd():
-    fake = jwt.encode({"sub": "adviseur", "role": "advisor", "exp": 9999999999},
-                      "verkeerd-geheim" * 3, algorithm="HS256")
+    # alle claims aanwezig: enkel de handtekening is fout
+    fake = jwt.encode(FULL_CLAIMS, "verkeerd-geheim" * 3, algorithm="HS256")
     r = client.get("/api/advisor/clients", headers={"Authorization": "Bearer " + fake})
     assert r.status_code == 401
 
 
 def test_token_met_alg_none_geweigerd():
-    fake = jwt.encode({"sub": "adviseur", "role": "advisor", "exp": 9999999999}, None, algorithm="none")
+    fake = jwt.encode(FULL_CLAIMS, None, algorithm="none")
     r = client.get("/api/advisor/clients", headers={"Authorization": "Bearer " + fake})
     assert r.status_code == 401
 
@@ -64,7 +68,7 @@ def test_uitloggen_trekt_token_in():
 def test_aanvaller_kan_klant_niet_buitensluiten():
     # aanvaller probeerde 6x een fout wachtwoord vanaf een ander IP (TestClient heeft 1 vast IP)
     for _ in range(6):
-        main._hit("fail:karim:6.6.6.6")
+        main._hit(("fail", "karim", "6.6.6.6"))
     assert login("karim").status_code == 200  # echte Karim kan nog steeds binnen
 
 
@@ -140,3 +144,66 @@ def test_security_headers():
     csp = r.headers["Content-Security-Policy"]
     assert "script-src 'self';" in csp and "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
     assert "Strict-Transport-Security" in r.headers
+
+
+# ---------------------------------------------------------------- review-fixes: login
+def test_parallelle_brute_force_wordt_afgeremd():
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(20) as ex:
+        codes = list(ex.map(lambda _: login("jan", "fout").status_code, range(20)))
+    assert codes.count(401) <= 5 and codes.count(429) >= 15
+
+
+def test_gebruikersnaam_met_scheidingsteken_geweigerd():
+    assert login("karim:1.2.3.4", "fout").status_code == 422
+
+
+def test_x_forwarded_for_wordt_niet_blind_vertrouwd():
+    # zonder TRUST_PROXY telt het echte verbindings-IP, niet de header
+    for i in range(5):
+        client.post("/api/login", json={"username": "jan", "password": "fout"},
+                    headers={"X-Forwarded-For": f"10.0.0.{i}"})
+    r = client.post("/api/login", json={"username": "jan", "password": "fout"},
+                    headers={"X-Forwarded-For": "10.0.0.99"})
+    assert r.status_code == 429
+
+
+def test_client_ip_achter_proxy_neemt_meest_rechtse_hop(monkeypatch):
+    monkeypatch.setattr(main, "TRUST_PROXY", True)
+
+    class Req:
+        headers = {"x-forwarded-for": "6.6.6.6, 81.82.83.84"}
+        client = type("C", (), {"host": "169.254.1.1"})()
+    assert main.client_ip(Req()) == "81.82.83.84"
+
+
+# ---------------------------------------------------------------- review-fixes: toestemming
+def test_zonder_toestemming_voor_loon_geen_loondag_timing():
+    h = auth("lotte")
+    client.put("/api/me/consent", headers=h, json={"signal": "income", "enabled": False})
+    v = client.get("/api/me", headers=h).json()
+    assert "timing" not in v or "loon" not in v["timing"]["why"].lower()
+
+
+def test_adviseur_krijgt_nooit_signalenlijst_of_boodschap():
+    for c in client.get("/api/advisor/clients", headers=auth("adviseur")).json():
+        assert "signals" not in c and "message" not in c
+
+
+def test_reset_herstelt_geen_ingetrokken_toestemming():
+    h = auth("lotte")
+    client.put("/api/me/consent", headers=h, json={"signal": "search", "enabled": False})
+    client.post("/api/me/reset", headers=h)
+    assert "search" not in main.CONSENT["c-lotte"]
+
+
+def test_stats_werkt():
+    s = client.get("/api/stats", headers=auth("lotte")).json()
+    assert s["customers"] == 10_000 and 0 < s["trigger_rate"] < 20
+
+
+# ---------------------------------------------------------------- review-fixes: taalmodel
+def test_taalmodel_uitvoer_met_krediet_of_bedrag_geweigerd():
+    assert main._safe_llm_text("Neem nu een lening van €5000!") is None
+    assert main._safe_llm_text("Denk aan een krediet voor je auto.") is None
+    assert main._safe_llm_text("Hoi Lotte, zullen we samen een buffer opbouwen? Jij beslist.")

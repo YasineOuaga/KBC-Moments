@@ -23,8 +23,9 @@ async function start(){$("loginView").hidden=true;$("appView").hidden=false;$("s
  const nm=user||"";
  $("av").textContent=nm.charAt(0);
  $("who").innerHTML=`<b>${esc(nm)}</b>${role==="advisor"?"Adviseur":"Klant"}`;
- if(role==="customer")renderCustomer(await api("/api/me"));
- else{advData=await api("/api/advisor/clients");advSel=0;renderAdvisor()}
+ try{if(role==="customer")renderCustomer(await api("/api/me"));
+  else{advData=await api("/api/advisor/clients");advSel=0;renderAdvisor()}}
+ catch(err){if(token)$("cerr").textContent=err.message}
  loadStats()}
 
 /* ---------- timing: het juiste moment ---------- */
@@ -58,15 +59,21 @@ function renderCustomer(v){
   $("acts").innerHTML=`<button class="btn small ghost" id="wrong" data-m="${esc(v.moment.key)}">Klopt niet voor mij</button>`;
   $("why").innerHTML=`<div class="w">Dit zijn de signalen die meetellen, met het bewijs:</div><ul>${v.why.map(w=>`<li>${esc(w.label)}<small>${esc(w.evidence)}</small></li>`).join("")}</ul>`;
  }else{
-  bub.innerHTML=`<b>Er wordt niets gestuurd</b>De zekerheid is te laag (minder dan 50%). Liever geen bericht dan een verkeerd bericht.`;
-  $("acts").innerHTML=(v.suppressed.length||v.signals.some(s=>!s.consent))?`<button class="btn small ghost" id="reset">Alles terugzetten</button>`:"";
+  bub.innerHTML=`<b>Er wordt niets gestuurd</b>${v.score>=.5?"Het doorslaggevende signaal ontbreekt, of je gaf er geen toestemming voor.":"De zekerheid is te laag (minder dan 50%)."} Liever geen bericht dan een verkeerd bericht.`;
+  $("acts").innerHTML=v.suppressed.length?`<button class="btn small ghost" id="reset">Eerder voorstel opnieuw tonen</button>`:"";
   $("why").innerHTML=`<div class="w">${v.suppressed.length?"Je gaf aan dat een eerder voorstel niet klopte. Dat onthouden we. ":""}Er zijn te weinig signalen met toestemming om een moment te herkennen.</div>`}}
 
-$("sigs").onchange=async e=>{const s=e.target.dataset.s;if(!s)return;
- renderCustomer(await api("/api/me/consent",{method:"PUT",body:JSON.stringify({signal:s,enabled:e.target.checked})}))};
-$("acts").onclick=async e=>{
- if(e.target.id==="wrong")renderCustomer(await api("/api/me/feedback",{method:"POST",body:JSON.stringify({moment:e.target.dataset.m})}));
- if(e.target.id==="reset")renderCustomer(await api("/api/me/reset",{method:"POST"}))};
+/* Elke actie: toon de serverstaat. Bij een fout de melding tonen en opnieuw ophalen,
+   zodat een vinkje nooit iets anders toont dan wat de server bewaarde. */
+async function act(path,opts){$("cerr").textContent="";
+ try{renderCustomer(await api(path,opts))}
+ catch(err){if(!token)return;$("cerr").textContent=err.message;
+  try{renderCustomer(await api("/api/me"))}catch{}}}
+$("sigs").onchange=e=>{const s=e.target.dataset.s;if(!s)return;
+ act("/api/me/consent",{method:"PUT",body:JSON.stringify({signal:s,enabled:e.target.checked})})};
+$("acts").onclick=e=>{
+ if(e.target.id==="wrong")act("/api/me/feedback",{method:"POST",body:JSON.stringify({moment:e.target.dataset.m})});
+ if(e.target.id==="reset")act("/api/me/reset",{method:"POST"})};
 
 /* ---------- adviseur ---------- */
 function renderAdvisor(){
