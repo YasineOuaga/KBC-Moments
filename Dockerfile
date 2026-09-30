@@ -2,8 +2,8 @@
 # komen als omgevingsvariabelen via Cloud Run, nooit in de image.
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-# Cloud Run zet de echte client als meest rechtse X-Forwarded-For-hop
-ENV TRUST_PROXY=1
+# TRUST_PROXY=1 NIET in de image: enkel zetten bij deploy achter Cloud Run (zie README),
+# anders kan een client zonder proxy ervoor zijn IP vervalsen.
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

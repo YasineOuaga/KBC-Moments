@@ -42,7 +42,7 @@ Deployen op Google Cloud Run (secrets als omgevingsvariabelen, nooit in de image
 ```bash
 gcloud run deploy kbc-moments --source . --region europe-west1 --allow-unauthenticated \
   --min-instances=1 --max-instances=1 \
-  --set-env-vars JWT_SECRET=...,DEMO_PASSWORD=...,GEMINI_API_KEY=...
+  --set-env-vars TRUST_PROXY=1,JWT_SECRET=...,DEMO_PASSWORD=...,GEMINI_API_KEY=...
 ```
 Precies 1 instantie, omdat de state in geheugen zit: zo ziet de adviseur altijd de toestemming die de klant net aanpaste.
 
@@ -56,7 +56,7 @@ Precies 1 instantie, omdat de state in geheugen zit: zo ziet de adviseur altijd 
 - Taalmodel: timeout van 5 s en een vangnet op de uitvoer. Tekst met krediet, lening of bedragen wordt geweigerd en vervangen door de standaardtekst.
 - Gedeelde state is thread-safe (lock), versies zijn gepind.
 - Security headers: strikte CSP zonder inline scripts, HSTS, Permissions-Policy. Output-escaping in de frontend.
-- 38 automatische tests voor authenticatie, autorisatie/IDOR, business logic en timing (`tests/`).
+- 42 automatische tests voor authenticatie, autorisatie/IDOR, business logic en timing (`tests/`).
 - Demo-vereenvoudiging: alle demo-accounts delen één wachtwoord uit `.env`.
 - Geen secrets in de repo, enkel synthetische data.
 

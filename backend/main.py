@@ -214,22 +214,29 @@ def _fallback_message(c: engine.Customer, m: dict) -> str:
     return f"Hoi {c.name}, we zagen dat er iets verandert. We willen je helpen: {m['goal']}. Jij beslist of en wanneer."
 
 
-# Vangnet naast de prompt: geen krediet-push en geen verzonnen bedragen, wat het model ook schrijft
-_FORBIDDEN = re.compile(r"krediet|lening|lenen|hypothe|€|\beur\b|\d", re.IGNORECASE)
+# Vangnet naast de prompt, wat het model ook schrijft:
+# - geen krediet-push ("woonlening" als onderwerp mag, "leen nu" of "krediet" niet)
+# - geen verzonnen bedragen: enkel bedragen die letterlijk in de voorgestelde actie staan
+_CREDIT = re.compile(r"krediet|\blening|\blenen\b|\bleen\b|hypothe", re.IGNORECASE)
+_MONEY = re.compile(r"€|\beuro?\b|\d", re.IGNORECASE)
 
 
-def _safe_llm_text(text: str | None) -> str | None:
+def _safe_llm_text(text: str | None, action: str) -> str | None:
     text = (text or "").strip()
-    if not text or len(text) > 600 or _FORBIDDEN.search(text):
+    if not text or len(text) > 600 or _CREDIT.search(text):
         return None
-    return text
+    rest = text
+    for n in re.findall(r"\d+", action):
+        rest = re.sub(rf"€\s?{n}\b|\b{n}\s?euro\b|\b{n}\b", "", rest, flags=re.IGNORECASE)
+    return None if _MONEY.search(rest) else text
 
 
 def _personal_message(c: engine.Customer, key: str, used: list[str]) -> dict:
     """Taalmodel ENKEL bij een actief moment, met cache. Fallback zonder API-key."""
     cache_key = (c.id, key, tuple(sorted(used)))
-    if cache_key in MSG_CACHE:
-        return MSG_CACHE[cache_key]
+    with STATE_LOCK:
+        if cache_key in MSG_CACHE:
+            return MSG_CACHE[cache_key]
     m = engine.MOMENTS[key]
     text, source = _fallback_message(c, m), "sjabloon"
     if GEMINI_API_KEY:
@@ -246,13 +253,15 @@ def _personal_message(c: engine.Customer, key: str, used: list[str]) -> dict:
                 "benadruk dat de klant zelf beslist. Geef enkel de boodschap."
             )
             r = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-            LLM_CALLS["count"] += 1
-            if safe := _safe_llm_text(r.text):
+            with STATE_LOCK:
+                LLM_CALLS["count"] += 1  # betaalde oproepen, ook als het vangnet de tekst weigert
+            if safe := _safe_llm_text(r.text, m["action"]):
                 text, source = safe, "taalmodel"
         except Exception:
             pass  # demo mag nooit crashen: val terug op sjabloon
     out = {"text": text, "source": source}
-    MSG_CACHE[cache_key] = out
+    with STATE_LOCK:
+        MSG_CACHE[cache_key] = out
     return out
 
 

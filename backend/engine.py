@@ -46,7 +46,7 @@ MOMENTS = {
         "action": "Bekijk je maandlast en regel je brandverzekering",
         "goal": "tonen wat de maandlast wordt en welke verzekering nu al nodig is",
         "channel": "Afspraak op kantoor voorgesteld, plus app",
-        "tone": "Geruststellend, met cijfers",
+        "tone": "Geruststellend en concreet",
         "timing": "workday",
     },
     "ret": {
@@ -120,7 +120,8 @@ def pick_moment(signals: dict[str, str], consent: set[str], suppressed: set[str]
     """Kiest het moment met de hoogste score, enkel met signalen waarvoor toestemming is.
 
     Een moment is pas actief als ook een ankersignaal meetelt: bijkomende signalen
-    alleen (huur, zoeken, laag saldo) bewijzen nog geen levensmoment.
+    alleen (huur, zoeken, laag saldo) bewijzen nog geen levensmoment. Verankerde
+    momenten gaan voor, zodat een moment zonder anker een geldig moment niet verbergt.
     """
     suppressed = suppressed or set()
     best = None
@@ -130,7 +131,7 @@ def pick_moment(signals: dict[str, str], consent: set[str], suppressed: set[str]
         used = [s for s in m["weights"] if s in signals and s in consent]
         score = round(sum(m["weights"][s] for s in used), 2)
         anchored = bool(m["anchor"] & set(used))
-        if best is None or score > best["score"]:
+        if best is None or (anchored, score) > (best["anchored"], best["score"]):
             best = {"key": key, "score": score, "used": used, "anchored": anchored}
     if best is None:
         return {"key": None, "score": 0, "used": [], "active": False}
@@ -169,8 +170,10 @@ def plan_contact(c: Customer, key: str, consent: set[str]) -> dict:
     salaries = [t[0] for t in c.tx if t[3] == "salary"]
     payday = (MOMENTS[key]["timing"] == "payday" and salaries and "income" in consent)
     if payday:
-        # meest voorkomende dag: een verschoven betaling (weekend) verandert de loondag niet
-        day = Counter(d.day for d in salaries).most_common(1)[0][0]
+        # meest voorkomende dag: een verschoven betaling (weekend) verandert de loondag niet.
+        # Bij gelijkspel de latere dag: een weekendverschuiving valt altijd vroeger.
+        counts = Counter(d.day for d in salaries)
+        day = max(counts, key=lambda d: (counts[d], d))
         when = _next_payday(day, TODAY)
         hour, why = 8, "De ochtend dat het loon binnenkomt: dan is er ruimte om te sparen."
     else:

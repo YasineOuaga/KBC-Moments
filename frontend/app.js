@@ -61,7 +61,7 @@ function renderCustomer(v){
  }else{
   bub.innerHTML=`<b>Er wordt niets gestuurd</b>${v.score>=.5?"Het doorslaggevende signaal ontbreekt, of je gaf er geen toestemming voor.":"De zekerheid is te laag (minder dan 50%)."} Liever geen bericht dan een verkeerd bericht.`;
   $("acts").innerHTML=v.suppressed.length?`<button class="btn small ghost" id="reset">Eerder voorstel opnieuw tonen</button>`:"";
-  $("why").innerHTML=`<div class="w">${v.suppressed.length?"Je gaf aan dat een eerder voorstel niet klopte. Dat onthouden we. ":""}Er zijn te weinig signalen met toestemming om een moment te herkennen.</div>`}}
+  $("why").innerHTML=`<div class="w">${v.suppressed.length?"Je gaf aan dat een eerder voorstel niet klopte. Dat onthouden we. ":""}${v.score>=.5?"Een moment wordt pas herkend als het doorslaggevende signaal meetelt, zoals een eerste loon of een woonlening-simulatie.":"Er zijn te weinig signalen met toestemming om een moment te herkennen."}</div>`}}
 
 /* Elke actie: toon de serverstaat. Bij een fout de melding tonen en opnieuw ophalen,
    zodat een vinkje nooit iets anders toont dan wat de server bewaarde. */

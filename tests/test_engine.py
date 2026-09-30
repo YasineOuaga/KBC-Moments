@@ -21,9 +21,15 @@ def test_eerste_job_vereist_loon():
     assert best["active"] is False
 
 
-def test_woning_vereist_simulatie_of_notaris():
+def test_verankerd_moment_wint_van_hogere_score_zonder_anker():
+    # zonder anker zou "first" (huur+zoeken+saldo = 0.65) winnen en alles verbergen
+    best = engine.pick_moment({"mortgage": "", "rent": "", "search": "", "lowbal": ""}, ALL)
+    assert best["key"] == "home" and best["active"]
+
+
+def test_zonder_enig_anker_niet_actief_maar_score_zichtbaar():
     best = engine.pick_moment({"rent": "", "search": "", "lowbal": ""}, ALL)
-    assert best["key"] != "home" or not best["active"]
+    assert best["active"] is False and best["score"] == 0.65
 
 
 def test_anker_zonder_toestemming_telt_niet():
@@ -82,3 +88,10 @@ def test_oude_notarisbetaling_telt_niet():
     c = cust()
     c.tx = [(engine.TODAY - timedelta(days=400), -9000, "Notaris", "notary")]
     assert "notary" not in engine.detect_signals(c)
+
+
+def test_gelijkspel_loondag_kiest_de_niet_verschoven_dag():
+    # loondag 30: 30/08/2026 is een zondag, dus betaald op vr 28/08. 30/09 normaal.
+    # Bij gelijkspel wint de latere dag (een weekendverschuiving is altijd vroeger).
+    for days in ([date(2026, 8, 28), date(2026, 9, 30)], [date(2026, 9, 30), date(2026, 8, 28)]):
+        assert engine.plan_contact(cust(days), "first", ALL)["date"] == "2026-10-30"

@@ -178,11 +178,13 @@ def test_client_ip_achter_proxy_neemt_meest_rechtse_hop(monkeypatch):
 
 
 # ---------------------------------------------------------------- review-fixes: toestemming
-def test_zonder_toestemming_voor_loon_geen_loondag_timing():
+def test_zonder_loontoestemming_geen_moment_en_geen_timing():
+    # het loon is het anker van "Eerste vaste job": zonder toestemming geen moment,
+    # en dus ook geen tijdstip dat uit het loon is afgeleid (zie ook test_engine)
     h = auth("lotte")
     client.put("/api/me/consent", headers=h, json={"signal": "income", "enabled": False})
     v = client.get("/api/me", headers=h).json()
-    assert "timing" not in v or "loon" not in v["timing"]["why"].lower()
+    assert v["active"] is False and "timing" not in v
 
 
 def test_adviseur_krijgt_nooit_signalenlijst_of_boodschap():
@@ -203,7 +205,30 @@ def test_stats_werkt():
 
 
 # ---------------------------------------------------------------- review-fixes: taalmodel
-def test_taalmodel_uitvoer_met_krediet_of_bedrag_geweigerd():
-    assert main._safe_llm_text("Neem nu een lening van €5000!") is None
-    assert main._safe_llm_text("Denk aan een krediet voor je auto.") is None
-    assert main._safe_llm_text("Hoi Lotte, zullen we samen een buffer opbouwen? Jij beslist.")
+def test_geslaagde_login_telt_niet_als_mislukte_poging():
+    for _ in range(4):
+        login("karim", "fout")
+    assert login("karim").status_code == 200
+    assert login("karim", "fout").status_code == 401   # 5e mislukte poging: nog toegestaan
+    assert login("karim", "fout").status_code == 429
+
+
+FIRST, HOME, RET = (engine.MOMENTS[k]["action"] for k in ("first", "home", "ret"))
+
+
+def test_taalmodel_uitvoer_met_krediet_of_verzonnen_bedrag_geweigerd():
+    assert main._safe_llm_text("Neem nu een lening van €5000!", FIRST) is None
+    assert main._safe_llm_text("Denk aan een krediet voor je auto.", FIRST) is None
+    assert main._safe_llm_text("Leen nu €2000 extra.", HOME) is None
+    assert main._safe_llm_text("Spaar €200 per maand.", FIRST) is None  # bedrag niet uit de actie
+
+
+def test_taalmodel_realistische_uitvoer_per_moment_toegelaten():
+    ok = [
+        ("Hoi Lotte! Zin in een spaarpotje van €50 per maand? Jij beslist.", FIRST),
+        ("Hoi Lotte, start je een spaarpotje van 50 euro per maand? Jij kiest.", FIRST),
+        ("Dag Karim, benieuwd wat je maandlast wordt met je woonlening? Jij beslist.", HOME),
+        ("Dag Jan, zin in een rustig gesprek over je pensioen? Jij beslist.", RET),
+    ]
+    for text, action in ok:
+        assert main._safe_llm_text(text, action) == text
