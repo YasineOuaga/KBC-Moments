@@ -39,8 +39,9 @@ if len(DEMO_PASSWORD) < 8:
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 TOKEN_TTL = timedelta(hours=2)
+JWT_ISS = JWT_AUD = "kbc-moments"
 
-FRONTEND = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
 # ---------------------------------------------------------------- gebruikers
@@ -67,6 +68,7 @@ CONSENT: dict[str, set[str]] = {cid: set(engine.SIGNALS) for cid in CUSTOMERS}
 SUPPRESSED: dict[str, set[str]] = defaultdict(set)
 MSG_CACHE: dict[tuple, dict] = {}
 LLM_CALLS = {"count": 0}
+REVOKED: dict[str, float] = {}  # jti -> verloop (epoch), na uitloggen ongeldig
 
 app = FastAPI(title="KBC Moments", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -77,10 +79,13 @@ async def security_headers(request: Request, call_next):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     resp.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
+        "font-src https://fonts.gstatic.com; connect-src 'self'; form-action 'self'; "
+        "frame-ancestors 'none'"
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -89,15 +94,31 @@ async def security_headers(request: Request, call_next):
 # ---------------------------------------------------------------- auth
 bearer = HTTPBearer(auto_error=False)
 _attempts: dict[str, deque] = defaultdict(deque)
+MAX_TRACKED = 10_000  # begrens geheugen: willekeurige gebruikersnamen vullen de tabel niet op
+WINDOW = 60
 
 
-def _rate_limit(key: str, limit: int = 5, window: int = 60):
-    q, now = _attempts[key], time.monotonic()
-    while q and now - q[0] > window:
+def _recent(key: str) -> deque:
+    now = time.monotonic()
+    if len(_attempts) > MAX_TRACKED:
+        for k in [k for k, q in _attempts.items() if not q or now - q[-1] > WINDOW]:
+            del _attempts[k]
+        if len(_attempts) > MAX_TRACKED:  # nog steeds vol: oudste weg
+            for k in sorted(_attempts, key=lambda k: _attempts[k][-1])[: len(_attempts) // 2]:
+                del _attempts[k]
+    q = _attempts[key]
+    while q and now - q[0] > WINDOW:
         q.popleft()
-    if len(q) >= limit:
+    return q
+
+
+def _check(key: str, limit: int):
+    if len(_recent(key)) >= limit:
         raise HTTPException(429, "Te veel pogingen, probeer over een minuut opnieuw")
-    q.append(now)
+
+
+def _hit(key: str):
+    _recent(key).append(time.monotonic())
 
 
 def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
@@ -105,13 +126,16 @@ def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) ->
         raise HTTPException(401, "Niet ingelogd")
     try:
         data = jwt.decode(cred.credentials, JWT_SECRET, algorithms=["HS256"],
-                          options={"require": ["sub", "exp", "role"]})
+                          audience=JWT_AUD, issuer=JWT_ISS,
+                          options={"require": ["sub", "exp", "role", "jti", "iss", "aud"]})
     except jwt.PyJWTError:
         raise HTTPException(401, "Ongeldige of verlopen sessie")
+    if data["jti"] in REVOKED:
+        raise HTTPException(401, "Sessie beëindigd")
     user = USERS.get(data["sub"])
     if user is None or user["role"] != data["role"]:
         raise HTTPException(401, "Ongeldige sessie")
-    return {"username": data["sub"], **user}
+    return {"username": data["sub"], "jti": data["jti"], "exp": data["exp"], **user}
 
 
 def require(role: str):
@@ -130,18 +154,36 @@ class LoginIn(BaseModel):
 @app.post("/api/login")
 def login(body: LoginIn, request: Request):
     ip = request.client.host if request.client else "?"
-    _rate_limit(f"ip:{ip}", limit=20)
-    _rate_limit(f"user:{body.username.lower()}")
-    user = USERS.get(body.username.lower())
+    name = body.username.lower()
+    # Enkel MISLUKTE pogingen tellen, per gebruiker+IP. Zo kan een aanvaller van
+    # elders een echte klant niet buitensluiten. De ruimere limiet per gebruiker
+    # blijft een rem op brute force over veel IP's heen.
+    keys = {f"ip:{ip}": 30, f"fail:{name}:{ip}": 5, f"fail:{name}": 30}
+    for k, limit in keys.items():
+        _check(k, limit)
+    _hit(f"ip:{ip}")
+    user = USERS.get(name)
     # altijd hashen, ook bij onbekende user (geen timing-lek)
     salt = user["salt"] if user else b"\x00" * 16
     ok = hmac.compare_digest(_hash(body.password, salt), user["pw"] if user else b"")
     if not user or not ok:
+        _hit(f"fail:{name}:{ip}")
+        _hit(f"fail:{name}")
         raise HTTPException(401, "Verkeerde gebruikersnaam of wachtwoord")
     now = datetime.now(timezone.utc)
-    token = jwt.encode({"sub": body.username.lower(), "role": user["role"],
-                        "iat": now, "exp": now + TOKEN_TTL}, JWT_SECRET, algorithm="HS256")
-    return {"token": token, "role": user["role"]}
+    token = jwt.encode({"sub": name, "role": user["role"], "iss": JWT_ISS, "aud": JWT_AUD,
+                        "jti": secrets.token_urlsafe(16), "iat": now, "exp": now + TOKEN_TTL},
+                       JWT_SECRET, algorithm="HS256")
+    return {"token": token, "role": user["role"], "name": name.capitalize()}
+
+
+@app.post("/api/logout")
+def logout(user: dict = Depends(current_user)):
+    now = time.time()
+    for jti in [j for j, exp in REVOKED.items() if exp < now]:
+        del REVOKED[jti]  # verlopen tokens hoeven niet onthouden te worden
+    REVOKED[user["jti"]] = user["exp"]
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- personalisatie
@@ -194,6 +236,7 @@ def _view(cid: str, with_message: bool = True) -> dict:
         m = engine.MOMENTS[best["key"]]
         res["moment"] = {"key": best["key"], "title": m["title"], "action": m["action"],
                          "channel": m["channel"], "tone": m["tone"]}
+        res["timing"] = engine.plan_contact(c, best["key"])
         if with_message:
             res["message"] = _personal_message(c, best["key"], best["used"])
     return res
@@ -224,7 +267,12 @@ class FeedbackIn(BaseModel):
 @app.post("/api/me/feedback")
 def feedback(body: FeedbackIn, user: dict = Depends(require("customer"))):
     """'Klopt niet': dit moment wordt niet meer voorgesteld aan deze klant."""
-    SUPPRESSED[user["customer_id"]].add(body.moment)
+    cid = user["customer_id"]
+    best = engine.pick_moment(SIGNALS[cid], CONSENT[cid], SUPPRESSED[cid])
+    # enkel feedback op het moment dat de klant nu effectief te zien krijgt
+    if not best["active"] or best["key"] != body.moment:
+        raise HTTPException(409, "Dit moment wordt je momenteel niet voorgesteld")
+    SUPPRESSED[cid].add(body.moment)
     return _view(user["customer_id"])
 
 
@@ -244,7 +292,7 @@ def advisor_clients(user: dict = Depends(require("advisor"))):
         v = _view(cid, with_message=False)
         # adviseur ziet het moment en de uitleg, geen ruwe transacties
         out.append({"customer": v["customer"], "score": v["score"], "active": v["active"],
-                    "moment": v.get("moment"), "why": v["why"]})
+                    "moment": v.get("moment"), "timing": v.get("timing"), "why": v["why"]})
     return out
 
 
@@ -280,4 +328,9 @@ def stats(user: dict = Depends(current_user)):
 # ---------------------------------------------------------------- frontend
 @app.get("/")
 def index():
-    return FileResponse(FRONTEND, media_type="text/html")
+    return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/app.js")
+def app_js():
+    return FileResponse(FRONTEND_DIR / "app.js", media_type="text/javascript")

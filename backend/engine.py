@@ -11,6 +11,8 @@ from datetime import date, timedelta
 
 TODAY = date(2026, 9, 30)
 BUFFER_EUR = 300  # persoonlijke buffer: saldo eronder = signaal
+CONTACT_GAP_DAYS = 30  # contactbeleid: max 1 proactief bericht per 30 dagen
+DAYS_NL = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 # ---------------------------------------------------------------- signalen
 SIGNALS = {
@@ -32,6 +34,7 @@ MOMENTS = {
         "goal": "helpen een buffer op te bouwen zodat huur en vaste kosten altijd gedekt zijn",
         "channel": "App-melding op je volgende salarisdag",
         "tone": "Informeel, korte zinnen",
+        "timing": "payday",
     },
     "home": {
         "title": "Eerste woning",
@@ -40,6 +43,7 @@ MOMENTS = {
         "goal": "tonen wat de maandlast wordt en welke verzekering nu al nodig is",
         "channel": "Afspraak op kantoor voorgesteld, plus app",
         "tone": "Geruststellend, met cijfers",
+        "timing": "workday",
     },
     "ret": {
         "title": "Op weg naar pensioen",
@@ -48,6 +52,7 @@ MOMENTS = {
         "goal": "samen het pensioenplan doorlopen en aanvullende opties tonen, zonder druk",
         "channel": "Persoonlijk gesprek, geen app-melding",
         "tone": "Rustig en uitgebreid",
+        "timing": "workday",
     },
 }
 THRESHOLD = 0.5
@@ -62,6 +67,7 @@ class Customer:
     start_balance: float
     tx: list = field(default_factory=list)       # (date, amount, counterparty, category)
     events: list = field(default_factory=list)   # (date, type)
+    last_contact: date | None = None             # laatste proactieve boodschap van KBC
 
 
 # ---------------------------------------------------------------- detectie
@@ -122,6 +128,47 @@ def pick_moment(signals: dict[str, str], consent: set[str], suppressed: set[str]
     return best
 
 
+# ---------------------------------------------------------------- timing
+def _next_workday(d: date) -> date:
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def _payday(d: date) -> date:
+    """Valt de loondag in het weekend, dan komt het loon de vrijdag ervoor."""
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def plan_contact(c: Customer, key: str) -> dict:
+    """Bepaalt WANNEER de boodschap vertrekt: het juiste moment, binnen het contactbeleid."""
+    salaries = [t[0] for t in c.tx if t[3] == "salary"]
+    if MOMENTS[key]["timing"] == "payday" and salaries:
+        day = min(max(salaries).day, 28)
+        y, m = TODAY.year, TODAY.month
+        when = _payday(date(y, m, day))
+        if when <= TODAY:
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+            when = _payday(date(y, m, day))
+        hour, why = 8, "De ochtend dat het loon binnenkomt: dan is er ruimte om te sparen."
+    else:
+        when = _next_workday(TODAY + timedelta(days=1))
+        hour, why = 10, "De eerstvolgende werkdag, tijdens de kantooruren."
+
+    held = None
+    if c.last_contact:
+        earliest = _next_workday(c.last_contact + timedelta(days=CONTACT_GAP_DAYS))
+        if earliest > when:
+            when = earliest
+            held = (f"Uitgesteld: laatste bericht was op {c.last_contact:%d/%m}. "
+                    f"Maximaal 1 bericht per {CONTACT_GAP_DAYS} dagen.")
+    return {"date": when.isoformat(), "hour": hour,
+            "label": f"{DAYS_NL[when.weekday()]} {when:%d/%m} om {hour:02d}:00",
+            "why": why, "held": held}
+
+
 # ---------------------------------------------------------------- synthetische data
 def _monthly(start: date, day: int, amount: float, cp: str, cat: str, until: date = TODAY):
     out, y, m = [], start.year, start.month
@@ -163,6 +210,7 @@ def demo_customers() -> dict[str, Customer]:
     karim.tx += [(date(2026, 9, 3), -9800, "Notaris De Smet", "notary")]
     karim.tx += _groceries(rng, y0, 110)
     karim.events += [(date(2026, 8, 18), "sim_mortgage"), (date(2026, 9, 1), "sim_mortgage")]
+    karim.last_contact = date(2026, 9, 15)  # kreeg onlangs al een bericht: contactbeleid houdt tegen
 
     jan = Customer("c-jan", "Jan", 62, "Kijkt naar de toekomst", 41000)
     jan.tx += _monthly(y0, 25, 3900, "Vlaamse Overheid", "salary")
