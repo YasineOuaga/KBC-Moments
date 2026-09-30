@@ -1,5 +1,9 @@
-fastapi>=0.110
-uvicorn>=0.29
-pyjwt>=2.8
-python-dotenv>=1.0
-google-genai>=1.0
+fastapi==0.142.2
+# Transitieve afhankelijkheden expliciet vastgezet op versies zonder bekende kwetsbaarheden
+# (starlette: CVE-2026-48710 opgelost vanaf 1.0.1; websockets: opgelost vanaf 16.1)
+starlette==1.7.0
+websockets==16.1.1
+uvicorn==0.54.0
+pyjwt==2.15.1
+python-dotenv==1.2.3
+google-genai==2.25.0
