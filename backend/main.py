@@ -30,7 +30,8 @@ from pydantic import BaseModel, Field
 
 import engine
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 if len(JWT_SECRET) < 32:
@@ -46,7 +47,7 @@ JWT_ISS = JWT_AUD = "kbc-moments"
 # X-Forwarded-For-hop, die de proxy zelf toevoegt en de client niet kan vervalsen.
 TRUST_PROXY = os.getenv("TRUST_PROXY") == "1"
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+FRONTEND_DIR = ROOT / "frontend"
 
 
 # ---------------------------------------------------------------- gebruikers
@@ -129,13 +130,8 @@ def _recent(key: tuple) -> deque:
     return q
 
 
-def _hit(key: tuple):
-    with _attempts_lock:
-        _recent(key).append(time.monotonic())
-
-
 def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
-    if cred is None or cred.scheme.lower() != "bearer":
+    if cred is None:  # HTTPBearer geeft None bij een ontbrekende of niet-Bearer header
         raise HTTPException(401, "Niet ingelogd")
     try:
         data = jwt.decode(cred.credentials, JWT_SECRET, algorithms=["HS256"],
@@ -171,7 +167,6 @@ def login(body: LoginIn, request: Request):
     # elders een echte klant niet buitensluiten. De ruimere limiet per gebruiker
     # blijft een rem op brute force over veel IP's heen.
     limits = {("ip", ip): 30, ("fail", name, ip): 5, ("fail", name): 30}
-    fails = [("fail", name, ip), ("fail", name)]
     with _attempts_lock:
         # controleren en meetellen in één stap, VÓÓR het trage hashen: een burst
         # parallelle verzoeken kan zo niet allemaal tegelijk door de controle glippen
@@ -187,7 +182,7 @@ def login(body: LoginIn, request: Request):
     if not user or not ok:
         raise HTTPException(401, "Verkeerde gebruikersnaam of wachtwoord")
     with _attempts_lock:  # geslaagd: deze poging telt niet als mislukt
-        for k in fails:
+        for k in (k for k in limits if k[0] == "fail"):
             try:
                 _attempts[k].remove(t)
             except ValueError:
@@ -296,7 +291,7 @@ def me(user: dict = Depends(require("customer"))):
 
 
 class ConsentIn(BaseModel):
-    signal: Literal["income", "rent", "search", "lowbal", "mortgage", "notary", "pension"]
+    signal: Literal[tuple(engine.SIGNALS)]  # afgeleid uit de engine: één bron van waarheid
     enabled: bool
 
 
@@ -309,7 +304,7 @@ def set_consent(body: ConsentIn, user: dict = Depends(require("customer"))):
 
 
 class FeedbackIn(BaseModel):
-    moment: Literal["first", "home", "ret"]
+    moment: Literal[tuple(engine.MOMENTS)]
 
 
 @app.post("/api/me/feedback")

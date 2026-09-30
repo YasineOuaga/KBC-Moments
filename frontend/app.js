@@ -44,6 +44,10 @@ async function start(){$("loginView").hidden=true;$("appView").hidden=false;$("s
 function timingBlock(t){if(!t)return"";
  return h`<div class="when"><span class="label">Gepland</span><b>${t.label}</b><small>${t.why}</small>${t.held?h`<small class="held">${t.held}</small>`:""}</div>`}
 
+/* ---------- gedeelde bouwstenen (klant en adviseur) ---------- */
+const whyItems=why=>why.map(w=>h`<li>${w.label}<small>${w.evidence}</small></li>`);
+const chips=(m,...extra)=>h`<div class="meta"><span class="chip">Kanaal: ${m.channel}</span><span class="chip">Toon: ${m.tone}</span>${extra.map(x=>h`<span class="chip">${x}</span>`)}</div>`;
+
 /* ---------- klant ---------- */
 function momentBlock(v){
  const pct=Math.round(v.score*100);
@@ -67,9 +71,9 @@ function renderCustomer(v){
  const bub=$("bub");bub.className="bubble"+(v.active?"":" none");
  if(v.active){
   const src=v.message.source==="taalmodel"?"Gepersonaliseerd door taalmodel":"Standaardtekst";
-  render(bub,h`<b>${v.moment.action}</b>${v.message.text}<div class="meta"><span class="chip">Kanaal: ${v.moment.channel}</span><span class="chip">Toon: ${v.moment.tone}</span><span class="chip">${src}</span></div>${timingBlock(v.timing)}`);
+  render(bub,h`<b>${v.moment.action}</b>${v.message.text}${chips(v.moment,src)}${timingBlock(v.timing)}`);
   render($("acts"),h`<button class="btn small ghost" id="wrong" data-m="${v.moment.key}">Klopt niet voor mij</button>`);
-  render($("why"),h`<div class="w">Dit zijn de signalen die meetellen, met het bewijs:</div><ul>${v.why.map(w=>h`<li>${w.label}<small>${w.evidence}</small></li>`)}</ul>`);
+  render($("why"),h`<div class="w">Dit zijn de signalen die meetellen, met het bewijs:</div><ul>${whyItems(v.why)}</ul>`);
  }else{
   render(bub,h`<b>Er wordt niets gestuurd</b>${v.score>=.5?"Het doorslaggevende signaal ontbreekt, of je gaf er geen toestemming voor.":"De zekerheid is te laag (minder dan 50%)."} Liever geen bericht dan een verkeerd bericht.`);
   render($("acts"),v.suppressed.length?h`<button class="btn small ghost" id="reset">Eerder voorstel opnieuw tonen</button>`:h``);
@@ -93,8 +97,8 @@ function renderAdvisor(){
  const c=advData[advSel];if(!c){render($("abrief"),h`<p>Geen klanten toegewezen.</p>`);return}
  const pct=Math.round(c.score*100);
  render($("abrief"),h`<div class="moment"><div><span class="label">Briefing voor je gesprek met ${c.customer.name}</span><h3>${c.active?c.moment.title:"Geen duidelijk moment"}</h3></div><div class="conf"><span>Zekerheid ${pct}%</span><div class="bar"><i id="abar"></i></div></div></div>
- <div class="bubble ${c.active?"":"none"}"><b>${c.active?"Voorgestelde aanpak: "+c.moment.action:"Geen actie nodig"}</b>${c.active?h`<div class="meta"><span class="chip">Kanaal: ${c.moment.channel}</span><span class="chip">Toon: ${c.moment.tone}</span></div>${timingBlock(c.timing)}`:"Laat deze klant met rust tot er een duidelijk moment is."}</div>
- <div class="why"><h2 style="font-size:18px">Waarom</h2><ul>${c.why.length?c.why.map(w=>h`<li>${w.label}<small>${w.evidence}</small></li>`):h`<li>Geen signalen met toestemming</li>`}</ul></div>`);
+ <div class="bubble ${c.active?"":"none"}"><b>${c.active?"Voorgestelde aanpak: "+c.moment.action:"Geen actie nodig"}</b>${c.active?h`${chips(c.moment)}${timingBlock(c.timing)}`:"Laat deze klant met rust tot er een duidelijk moment is."}</div>
+ <div class="why"><h2 class="sub">Waarom</h2><ul>${c.why.length?whyItems(c.why):h`<li>Geen signalen met toestemming</li>`}</ul></div>`);
  $("abar").style.width=pct+"%"}
 $("clients").onclick=e=>{const b=e.target.closest("button");if(b){advSel=+b.dataset.i;renderAdvisor()}};
 
