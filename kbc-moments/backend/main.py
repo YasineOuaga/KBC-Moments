@@ -1,0 +1,283 @@
+"""KBC Moments API.
+
+Security-principes (Aikido: auth, authorization, IDOR, business logic):
+- De klant-ID komt ALTIJD uit de JWT, nooit uit de URL of body.
+- Adviseurs zien enkel klanten die aan hen toegewezen zijn.
+- Rollen worden server-side gecontroleerd per endpoint.
+- Wachtwoorden gehasht (PBKDF2), secrets enkel via omgevingsvariabelen.
+- Rate limiting op login, strikte input-validatie, security headers.
+"""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import os
+import secrets
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Literal
+
+import jwt
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
+
+import engine
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+if len(JWT_SECRET) < 32:
+    raise RuntimeError("Zet JWT_SECRET (minstens 32 tekens) in .env")
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "")
+if len(DEMO_PASSWORD) < 8:
+    raise RuntimeError("Zet DEMO_PASSWORD (minstens 8 tekens) in .env")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+TOKEN_TTL = timedelta(hours=2)
+
+FRONTEND = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+
+
+# ---------------------------------------------------------------- gebruikers
+def _hash(pw: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 200_000)
+
+
+def _user(role: str, customer_id: str | None = None, clients: tuple = ()):
+    salt = secrets.token_bytes(16)
+    return {"role": role, "customer_id": customer_id, "clients": set(clients),
+            "salt": salt, "pw": _hash(DEMO_PASSWORD, salt)}
+
+
+USERS = {
+    "lotte": _user("customer", "c-lotte"),
+    "karim": _user("customer", "c-karim"),
+    "jan": _user("customer", "c-jan"),
+    "adviseur": _user("advisor", clients=("c-lotte", "c-karim")),  # Jan is NIET toegewezen
+}
+
+CUSTOMERS = engine.demo_customers()
+SIGNALS = {cid: engine.detect_signals(c) for cid, c in CUSTOMERS.items()}
+CONSENT: dict[str, set[str]] = {cid: set(engine.SIGNALS) for cid in CUSTOMERS}
+SUPPRESSED: dict[str, set[str]] = defaultdict(set)
+MSG_CACHE: dict[tuple, dict] = {}
+LLM_CALLS = {"count": 0}
+
+app = FastAPI(title="KBC Moments", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---------------------------------------------------------------- auth
+bearer = HTTPBearer(auto_error=False)
+_attempts: dict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit(key: str, limit: int = 5, window: int = 60):
+    q, now = _attempts[key], time.monotonic()
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        raise HTTPException(429, "Te veel pogingen, probeer over een minuut opnieuw")
+    q.append(now)
+
+
+def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
+    if cred is None or cred.scheme.lower() != "bearer":
+        raise HTTPException(401, "Niet ingelogd")
+    try:
+        data = jwt.decode(cred.credentials, JWT_SECRET, algorithms=["HS256"],
+                          options={"require": ["sub", "exp", "role"]})
+    except jwt.PyJWTError:
+        raise HTTPException(401, "Ongeldige of verlopen sessie")
+    user = USERS.get(data["sub"])
+    if user is None or user["role"] != data["role"]:
+        raise HTTPException(401, "Ongeldige sessie")
+    return {"username": data["sub"], **user}
+
+
+def require(role: str):
+    def dep(user: dict = Depends(current_user)) -> dict:
+        if user["role"] != role:
+            raise HTTPException(403, "Geen toegang")
+        return user
+    return dep
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=40)
+    password: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/login")
+def login(body: LoginIn, request: Request):
+    ip = request.client.host if request.client else "?"
+    _rate_limit(f"ip:{ip}", limit=20)
+    _rate_limit(f"user:{body.username.lower()}")
+    user = USERS.get(body.username.lower())
+    # altijd hashen, ook bij onbekende user (geen timing-lek)
+    salt = user["salt"] if user else b"\x00" * 16
+    ok = hmac.compare_digest(_hash(body.password, salt), user["pw"] if user else b"")
+    if not user or not ok:
+        raise HTTPException(401, "Verkeerde gebruikersnaam of wachtwoord")
+    now = datetime.now(timezone.utc)
+    token = jwt.encode({"sub": body.username.lower(), "role": user["role"],
+                        "iat": now, "exp": now + TOKEN_TTL}, JWT_SECRET, algorithm="HS256")
+    return {"token": token, "role": user["role"]}
+
+
+# ---------------------------------------------------------------- personalisatie
+def _fallback_message(c: engine.Customer, m: dict) -> str:
+    return f"Hoi {c.name}, we zagen dat er iets verandert. We willen je helpen: {m['goal']}. Jij beslist of en wanneer."
+
+
+def _personal_message(c: engine.Customer, key: str, used: list[str]) -> dict:
+    """Taalmodel ENKEL bij een actief moment, met cache. Fallback zonder API-key."""
+    cache_key = (c.id, key, tuple(sorted(used)))
+    if cache_key in MSG_CACHE:
+        return MSG_CACHE[cache_key]
+    m = engine.MOMENTS[key]
+    text, source = _fallback_message(c, m), "sjabloon"
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            prompt = (
+                "Je schrijft één korte boodschap (max 2 zinnen, Nederlands) van KBC aan een klant.\n"
+                f"Voornaam: {c.name}. Toon: {m['tone']}. Doel: {m['goal']}.\n"
+                f"Voorgestelde actie: {m['action']}.\n"
+                "Regels: geen verkoopdruk, geen krediet voorstellen, geen bedragen verzinnen, "
+                "benadruk dat de klant zelf beslist. Geef enkel de boodschap."
+            )
+            r = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            if r.text and len(r.text) < 600:
+                text, source = r.text.strip(), "taalmodel"
+                LLM_CALLS["count"] += 1
+        except Exception:
+            pass  # demo mag nooit crashen: val terug op sjabloon
+    out = {"text": text, "source": source}
+    MSG_CACHE[cache_key] = out
+    return out
+
+
+def _view(cid: str, with_message: bool = True) -> dict:
+    c = CUSTOMERS[cid]
+    sigs = SIGNALS[cid]
+    best = engine.pick_moment(sigs, CONSENT[cid], SUPPRESSED[cid])
+    res = {
+        "customer": {"name": c.name, "age": c.age, "desc": c.desc},
+        "signals": [{"key": k, "label": lbl, "present": k in sigs, "consent": k in CONSENT[cid],
+                     "evidence": sigs.get(k) if k in CONSENT[cid] else None}
+                    for k, lbl in engine.SIGNALS.items()],
+        "score": best["score"], "active": best["active"], "suppressed": sorted(SUPPRESSED[cid]),
+        "why": [{"label": engine.SIGNALS[s], "evidence": sigs[s]} for s in best["used"]],
+    }
+    if best["active"]:
+        m = engine.MOMENTS[best["key"]]
+        res["moment"] = {"key": best["key"], "title": m["title"], "action": m["action"],
+                         "channel": m["channel"], "tone": m["tone"]}
+        if with_message:
+            res["message"] = _personal_message(c, best["key"], best["used"])
+    return res
+
+
+# ---------------------------------------------------------------- klant-endpoints
+@app.get("/api/me")
+def me(user: dict = Depends(require("customer"))):
+    return _view(user["customer_id"])  # ID uit de token, nooit uit de request
+
+
+class ConsentIn(BaseModel):
+    signal: Literal["income", "rent", "search", "lowbal", "mortgage", "notary", "pension"]
+    enabled: bool
+
+
+@app.put("/api/me/consent")
+def set_consent(body: ConsentIn, user: dict = Depends(require("customer"))):
+    cid = user["customer_id"]
+    (CONSENT[cid].add if body.enabled else CONSENT[cid].discard)(body.signal)
+    return _view(cid)
+
+
+class FeedbackIn(BaseModel):
+    moment: Literal["first", "home", "ret"]
+
+
+@app.post("/api/me/feedback")
+def feedback(body: FeedbackIn, user: dict = Depends(require("customer"))):
+    """'Klopt niet': dit moment wordt niet meer voorgesteld aan deze klant."""
+    SUPPRESSED[user["customer_id"]].add(body.moment)
+    return _view(user["customer_id"])
+
+
+@app.post("/api/me/reset")
+def reset(user: dict = Depends(require("customer"))):
+    cid = user["customer_id"]
+    CONSENT[cid] = set(engine.SIGNALS)
+    SUPPRESSED[cid].clear()
+    return _view(cid)
+
+
+# ---------------------------------------------------------------- adviseur
+@app.get("/api/advisor/clients")
+def advisor_clients(user: dict = Depends(require("advisor"))):
+    out = []
+    for cid in sorted(user["clients"]):
+        v = _view(cid, with_message=False)
+        # adviseur ziet het moment en de uitleg, geen ruwe transacties
+        out.append({"customer": v["customer"], "score": v["score"], "active": v["active"],
+                    "moment": v.get("moment"), "why": v["why"]})
+    return out
+
+
+# ---------------------------------------------------------------- schaal
+_STATS: dict = {}
+
+
+@app.get("/api/stats")
+def stats(user: dict = Depends(current_user)):
+    if not _STATS:
+        n = 10_000
+        pop = engine.synthetic_population(n)
+        t0 = time.perf_counter()
+        counts = {k: 0 for k in engine.MOMENTS}
+        none = 0
+        for c in pop:
+            best = engine.pick_moment(engine.detect_signals(c), set(engine.SIGNALS))
+            if best["active"]:
+                counts[best["key"]] += 1
+            else:
+                none += 1
+        ms = (time.perf_counter() - t0) * 1000
+        triggered = n - none
+        _STATS.update({
+            "customers": n, "ms": round(ms), "none": none, "triggered": triggered,
+            "moments": [{"title": engine.MOMENTS[k]["title"], "count": v} for k, v in counts.items()],
+            "trigger_rate": round(triggered / n * 100, 1),
+            "projected_seconds_2_3m": round(ms / 1000 * 230, 1),  # 1 CPU-kern, lineair
+        })
+    return {**_STATS, "llm_calls_this_session": LLM_CALLS["count"]}
+
+
+# ---------------------------------------------------------------- frontend
+@app.get("/")
+def index():
+    return FileResponse(FRONTEND, media_type="text/html")

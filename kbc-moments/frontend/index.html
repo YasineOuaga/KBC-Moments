@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KBC Moments – begeleiden op het juiste moment</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+:root{--bg:#eef2f5;--panel:#fff;--ink:#0f1f2e;--mute:#5a6b7a;--line:#d5dde4;--blue:#0b6fb8;--hot:#d9481f;--ok:#157a4b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c1620;--panel:#14222f;--ink:#e8eef3;--mute:#93a4b3;--line:#27394a;--blue:#4aa8e8;--hot:#ff7a4d;--ok:#4cc58a}}
+:root[data-theme="dark"]{--bg:#0c1620;--panel:#14222f;--ink:#e8eef3;--mute:#93a4b3;--line:#27394a;--blue:#4aa8e8;--hot:#ff7a4d;--ok:#4cc58a}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.55 "IBM Plex Sans",system-ui,sans-serif}
+h1,h2,h3{font-family:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;line-height:1.15;margin:0}
+.wrap{max-width:1040px;margin:0 auto;padding:28px 18px 56px}
+h1{font-size:clamp(30px,5vw,46px);font-weight:700;max-width:16ch}
+.lead{color:var(--mute);max-width:62ch;margin:12px 0 28px}
+.grid{display:grid;grid-template-columns:300px 1fr;gap:18px}
+@media(max-width:780px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+h2{font-size:19px;font-weight:700;margin-bottom:12px}
+.cust{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.cust button{font:inherit;text-align:left;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer}
+.cust button small{display:block;color:var(--mute)}
+.cust button[aria-pressed=true]{border-color:var(--blue);box-shadow:inset 3px 0 0 var(--blue)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.sig{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line);cursor:pointer}
+.sig input{margin-top:4px;accent-color:var(--blue)}
+.sig.off{color:var(--mute)}
+.sig .tag{margin-left:auto;font-size:13px;color:var(--mute);white-space:nowrap}
+.note{font-size:14px;color:var(--mute);margin:10px 0 0}
+.moment{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.moment h3{font-size:clamp(24px,4vw,32px)}
+.conf{min-width:150px}.conf span{font-size:14px;color:var(--mute)}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--blue);transition:width .3s}
+.bubble{margin:18px 0;background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;padding:14px 16px}
+.bubble.none{border-left-color:var(--mute)}
+.bubble b{display:block;font-family:"Bricolage Grotesque",system-ui,sans-serif;font-size:18px;margin-bottom:4px}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:14px;color:var(--mute);margin-top:10px}
+.why{border-top:1px solid var(--line);padding-top:14px}
+.why ul{margin:8px 0 0;padding-left:20px}.why li{margin:4px 0}
+.why li small{display:block;color:var(--mute)}
+.why .w{color:var(--mute);font-size:14px}
+.pipe{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 20px}
+.pipe div{flex:1 1 150px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px}
+.pipe b{display:block;font-size:15px}
+.pipe .hot{border-color:var(--hot)}
+.ctl{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+@media(max-width:600px){.ctl{grid-template-columns:1fr}}
+.ctl label{display:block;font-weight:500}.ctl output{color:var(--blue);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--blue)}
+.cmp{display:grid;gap:12px}
+.row .top{display:flex;justify-content:space-between;gap:10px;font-size:15px;flex-wrap:wrap}
+.row .bar{height:14px}.row.naive .bar i{background:var(--hot)}.row.ours .bar i{background:var(--ok)}
+.big{font-family:"Bricolage Grotesque",system-ui,sans-serif;font-size:22px;font-weight:700;margin-top:16px}
+section{margin-top:18px}
+footer{margin-top:24px;color:var(--mute);font-size:14px}
+.btn{font:inherit;font-weight:500;border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:9px 14px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--blue)}
+.btn.small{padding:6px 10px;font-size:14px}
+.login{max-width:420px}
+.login label{display:block;font-weight:500;margin-top:12px}
+.login input[type=text],.login input[type=password]{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-top:4px}
+.quick{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.err{color:var(--hot);font-size:14px;min-height:20px;margin-top:8px}
+.top-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.pill{font-size:13px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--mute)}
+.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+.stat div{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font-family:"Bricolage Grotesque",system-ui,sans-serif;font-size:24px}
+.stat span{font-size:14px;color:var(--mute)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Begeleid klanten op het juiste moment, niet met de juiste reclame.</h1>
+<p class="lead">Proof of concept voor de KBC Challenge. Transacties worden omgezet in signalen, signalen in een levensmoment, het moment bepaalt één passende actie, en elke klant ziet waarom. Alle data is synthetisch.</p>
+
+<!-- LOGIN -->
+<section class="panel login" id="loginView">
+<h2>Inloggen</h2>
+<form id="loginForm" autocomplete="on">
+<label for="u">Gebruiker</label><input id="u" type="text" autocomplete="username" maxlength="40" required>
+<label for="pw">Wachtwoord</label><input id="pw" type="password" autocomplete="current-password" maxlength="200" required>
+<div class="quick"><span class="note" style="margin:6px 0 0">Demo:</span>
+<button type="button" class="btn ghost small" data-u="lotte">Lotte</button>
+<button type="button" class="btn ghost small" data-u="karim">Karim</button>
+<button type="button" class="btn ghost small" data-u="jan">Jan</button>
+<button type="button" class="btn ghost small" data-u="adviseur">Adviseur</button></div>
+<div class="err" id="lerr" role="alert"></div>
+<button class="btn" type="submit">Inloggen</button>
+</form>
+</section>
+
+<!-- APP -->
+<div id="appView" hidden>
+<div class="top-bar"><span class="pill" id="who"></span><button class="btn ghost small" id="logout">Uitloggen</button></div>
+
+<!-- klant -->
+<div class="grid" id="customerView" hidden>
+<aside class="panel">
+<h2 id="cname"></h2>
+<p class="note" id="cdesc" style="margin:0 0 16px"></p>
+<h2>Signalen met toestemming</h2>
+<div id="sigs"></div>
+<p class="note">Jij beslist welke signalen meetellen. Zet er een uit en het voorstel past zich meteen aan.</p>
+</aside>
+<main class="panel" aria-live="polite">
+<div class="moment"><div><span class="note">Herkend moment</span><h3 id="mt"></h3></div>
+<div class="conf"><span id="cl"></span><div class="bar"><i id="cb"></i></div></div></div>
+<div class="bubble" id="bub"></div>
+<div class="actions" id="acts"></div>
+<div class="why" style="margin-top:16px"><h2>Waarom zie ik dit?</h2><div id="why"></div></div>
+</main>
+</div>
+
+<!-- adviseur -->
+<div class="grid" id="advisorView" hidden>
+<aside class="panel"><h2>Mijn klanten</h2><div class="cust" id="clients"></div>
+<p class="note">Je ziet enkel klanten die aan jou toegewezen zijn, en enkel signalen waarvoor de klant toestemming gaf.</p></aside>
+<main class="panel" aria-live="polite" id="abrief"></main>
+</div>
+
+<section class="panel">
+<h2>Op schaal: 2,3 miljoen klanten</h2>
+<div class="pipe">
+<div><b>1. Signalen</b>transacties, app, producten, met toestemming</div>
+<div><b>2. Moment</b>regels per segment, in batch</div>
+<div><b>3. Beleid</b>beste volgende actie, of niets sturen</div>
+<div class="hot"><b>4. Uitleg</b>taalmodel enkel bij een trigger</div>
+<div><b>5. Kanaal</b>app, mail, kantoor, stem</div>
+</div>
+<h2 style="font-size:16px">Gemeten: dezelfde motor op 10.000 synthetische klanten</h2>
+<div class="stat" id="stats"><div><span>Laden…</span></div></div>
+<div class="ctl">
+<div><label for="n">Aantal klanten: <output id="no"></output></label><input id="n" type="range" min="100000" max="2300000" step="100000" value="2300000"></div>
+<div><label for="p">Klanten met een trigger per dag: <output id="po"></output></label><input id="p" type="range" min="0.5" max="10" step="0.5" value="2"></div>
+</div>
+<div class="cmp">
+<div class="row naive"><div class="top"><span>Elke klant elke dag een taalmodel-oproep</span><b id="c1"></b></div><div class="bar"><i id="b1"></i></div></div>
+<div class="row ours"><div class="top"><span>Moment-motor, taalmodel enkel bij trigger</span><b id="c2"></b></div><div class="bar"><i id="b2"></i></div></div>
+</div>
+<div class="big" id="sum"></div>
+<p class="note">Kostaannames, niet gemeten: €0,002 per taalmodel-oproep en €0,00001 per klant voor de batch-detectie.</p>
+</section>
+</div>
+<footer>KBC Moments · Tectonic Hackathon · synthetische data, geen echte klantgegevens.</footer>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let token=null,role=null,advSel=0,advData=[];
+
+async function api(path,opts={}){
+ const r=await fetch(path,{...opts,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})}});
+ if(r.status===401&&token){logout();throw new Error("Sessie verlopen")}
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)throw new Error(d.detail||"Er ging iets mis");
+ return d}
+
+/* ---------- login ---------- */
+document.querySelectorAll("[data-u]").forEach(b=>b.onclick=()=>{$("u").value=b.dataset.u;$("pw").focus()});
+$("loginForm").onsubmit=async e=>{e.preventDefault();$("lerr").textContent="";
+ try{const d=await api("/api/login",{method:"POST",body:JSON.stringify({username:$("u").value.trim(),password:$("pw").value})});
+  token=d.token;role=d.role;$("pw").value="";start()}catch(err){$("lerr").textContent=err.message}};
+function logout(){token=null;role=null;$("appView").hidden=true;$("loginView").hidden=false}
+$("logout").onclick=logout;
+
+async function start(){$("loginView").hidden=true;$("appView").hidden=false;
+ $("customerView").hidden=role!=="customer";$("advisorView").hidden=role!=="advisor";
+ $("who").textContent=role==="advisor"?"Ingelogd als adviseur":"Ingelogd als klant";
+ if(role==="customer")renderCustomer(await api("/api/me"));
+ else{advData=await api("/api/advisor/clients");advSel=0;renderAdvisor()}
+ loadStats()}
+
+/* ---------- klant ---------- */
+function momentBlock(v,name){
+ const pct=Math.round(v.score*100);
+ $("mt").textContent=v.active?v.moment.title:"Geen duidelijk moment";
+ $("cl").textContent="Zekerheid "+pct+"%";$("cb").style.width=pct+"%";}
+
+function renderCustomer(v){
+ $("cname").textContent=v.customer.name+", "+v.customer.age;$("cdesc").textContent=v.customer.desc;
+ $("sigs").innerHTML=v.signals.map(s=>`<label class="sig ${s.consent&&s.present?"":"off"}"><input type="checkbox" data-s="${esc(s.key)}" ${s.consent?"checked":""}><span>${esc(s.label)}</span><span class="tag">${s.present?"aanwezig":"niet van toepassing"}</span></label>`).join("");
+ momentBlock(v);
+ const bub=$("bub");bub.className="bubble"+(v.active?"":" none");
+ if(v.active){
+  const src=v.message.source==="taalmodel"?"Gepersonaliseerd door taalmodel":"Standaardtekst";
+  bub.innerHTML=`<b>${esc(v.moment.action)}</b>${esc(v.message.text)}<div class="meta"><span>Kanaal: ${esc(v.moment.channel)}</span><span>Toon: ${esc(v.moment.tone)}</span><span>${src}</span></div>`;
+  $("acts").innerHTML=`<button class="btn small ghost" id="wrong" data-m="${esc(v.moment.key)}">Klopt niet voor mij</button>`;
+  $("why").innerHTML=`<div class="w">Dit zijn de signalen die meetellen, met het bewijs:</div><ul>${v.why.map(w=>`<li>${esc(w.label)}<small>${esc(w.evidence)}</small></li>`).join("")}</ul>`;
+ }else{
+  bub.innerHTML=`<b>Er wordt niets gestuurd</b>De zekerheid is te laag (minder dan 50%). Liever geen bericht dan een verkeerd bericht.`;
+  $("acts").innerHTML=(v.suppressed.length||v.signals.some(s=>!s.consent))?`<button class="btn small ghost" id="reset">Alles terugzetten</button>`:"";
+  $("why").innerHTML=`<div class="w">${v.suppressed.length?"Je gaf aan dat een eerder voorstel niet klopte. Dat onthouden we. ":""}Er zijn te weinig signalen met toestemming om een moment te herkennen.</div>`}}
+
+$("sigs").onchange=async e=>{const s=e.target.dataset.s;if(!s)return;
+ renderCustomer(await api("/api/me/consent",{method:"PUT",body:JSON.stringify({signal:s,enabled:e.target.checked})}))};
+$("acts").onclick=async e=>{
+ if(e.target.id==="wrong")renderCustomer(await api("/api/me/feedback",{method:"POST",body:JSON.stringify({moment:e.target.dataset.m})}));
+ if(e.target.id==="reset")renderCustomer(await api("/api/me/reset",{method:"POST"}))};
+
+/* ---------- adviseur ---------- */
+function renderAdvisor(){
+ $("clients").innerHTML=advData.map((c,i)=>`<button aria-pressed="${i===advSel}" data-i="${i}">${esc(c.customer.name)}, ${esc(c.customer.age)}<small>${c.active?esc(c.moment.title):"Geen moment"}</small></button>`).join("");
+ const c=advData[advSel];if(!c){$("abrief").innerHTML="<p>Geen klanten toegewezen.</p>";return}
+ const pct=Math.round(c.score*100);
+ $("abrief").innerHTML=`<div class="moment"><div><span class="note">Briefing voor je gesprek met ${esc(c.customer.name)}</span><h3>${c.active?esc(c.moment.title):"Geen duidelijk moment"}</h3></div><div class="conf"><span>Zekerheid ${pct}%</span><div class="bar"><i style="width:${pct}%"></i></div></div></div>
+ <div class="bubble ${c.active?"":"none"}"><b>${c.active?"Voorgestelde aanpak: "+esc(c.moment.action):"Geen actie nodig"}</b>${c.active?"Kanaal: "+esc(c.moment.channel)+". Toon: "+esc(c.moment.tone)+".":"Laat deze klant met rust tot er een duidelijk moment is."}</div>
+ <div class="why"><h2>Waarom</h2><ul>${c.why.map(w=>`<li>${esc(w.label)}<small>${esc(w.evidence)}</small></li>`).join("")||"<li>Geen signalen met toestemming</li>"}</ul></div>`}
+$("clients").onclick=e=>{const b=e.target.closest("button");if(b){advSel=+b.dataset.i;renderAdvisor()}};
+
+/* ---------- schaal ---------- */
+async function loadStats(){try{const s=await api("/api/stats");
+ $("stats").innerHTML=`<div><b>${s.customers.toLocaleString("nl-BE")}</b><span>klanten geanalyseerd</span></div>
+ <div><b>${s.ms} ms</b><span>detectie, 1 CPU-kern</span></div>
+ <div><b>${s.trigger_rate}%</b><span>met een moment, de rest krijgt niets</span></div>
+ ${s.moments.map(m=>`<div><b>${m.count}</b><span>${esc(m.title)}</span></div>`).join("")}
+ <div><b>±${s.projected_seconds_2_3m} s</b><span>geschat voor 2,3 miljoen klanten</span></div>`;
+ const p=Math.max(.5,Math.min(10,Math.round(s.trigger_rate*2)/2));$("p").value=p;scale()}catch(e){$("stats").innerHTML=`<div><span>${esc(e.message)}</span></div>`}}
+const eur=v=>"€"+v.toLocaleString("nl-BE",{maximumFractionDigits:v<100?2:0});
+function scale(){const n=+$("n").value,p=+$("p").value;
+ const tr=n*p/100,naive=n*.002,ours=n*.00001+tr*.002;
+ $("no").textContent=n.toLocaleString("nl-BE");$("po").textContent=p+"% ("+Math.round(tr).toLocaleString("nl-BE")+" klanten)";
+ $("c1").textContent=eur(naive)+" per dag";$("c2").textContent=eur(ours)+" per dag";
+ const mx=2300000*.002;$("b1").style.width=naive/mx*100+"%";$("b2").style.width=Math.max(ours/mx*100,1)+"%";
+ $("sum").textContent="Ongeveer "+Math.round(naive/ours)+"x goedkoper, met dezelfde uitleg per klant.";}
+$("n").oninput=$("p").oninput=scale;scale();
+</script>
+</body>
+</html>
